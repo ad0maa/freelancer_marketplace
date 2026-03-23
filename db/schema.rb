@@ -10,7 +10,15 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_03_23_092821) do
+ActiveRecord::Schema[8.1].define(version: 2026_03_23_235617) do
+  create_table "clients", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "email", null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.index ["email"], name: "index_clients_on_email", unique: true
+  end
+
   create_table "freelancers", force: :cascade do |t|
     t.boolean "availability", default: true
     t.datetime "created_at", null: false
