@@ -20,3 +20,9 @@ Style/Documentation:
 Metrics/BlockLength:
   Exclude:
     - "spec/**/*"
+
+RSpec/MultipleExpectations:
+  Max: 2
+
+RSpec/ExampleLength:
+  Max: 10
