@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_03_23_235617) do
+ActiveRecord::Schema[8.1].define(version: 2026_03_24_000104) do
   create_table "clients", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "email", null: false
@@ -27,5 +27,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_03_23_235617) do
     t.string "name", null: false
     t.datetime "updated_at", null: false
     t.index ["email"], name: "index_freelancers_on_email", unique: true
+  end
+
+  create_table "skills", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "name", null: false
+    t.datetime "updated_at", null: false
+    t.index ["name"], name: "index_skills_on_name", unique: true
   end
 end
