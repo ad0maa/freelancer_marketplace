@@ -10,7 +10,20 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_03_24_001233) do
+ActiveRecord::Schema[8.1].define(version: 2026_03_24_003954) do
+  create_table "bookings", force: :cascade do |t|
+    t.integer "client_id", null: false
+    t.datetime "created_at", null: false
+    t.date "end_date", null: false
+    t.integer "freelancer_id", null: false
+    t.date "start_date", null: false
+    t.integer "status", default: 0, null: false
+    t.decimal "total_amount", precision: 10, scale: 2, null: false
+    t.datetime "updated_at", null: false
+    t.index ["client_id"], name: "index_bookings_on_client_id"
+    t.index ["freelancer_id"], name: "index_bookings_on_freelancer_id"
+  end
+
   create_table "clients", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "email", null: false
@@ -46,6 +59,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_03_24_001233) do
     t.index ["name"], name: "index_skills_on_name", unique: true
   end
 
+  add_foreign_key "bookings", "clients"
+  add_foreign_key "bookings", "freelancers"
   add_foreign_key "freelancer_skills", "freelancers"
   add_foreign_key "freelancer_skills", "skills"
 end
