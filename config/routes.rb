@@ -4,7 +4,13 @@ Rails.application.routes.draw do
     namespace :v1 do
       resources :freelancers
       resources :clients
-      resources :bookings
+      resources :bookings do
+        member do
+          patch :confirm
+          patch :complete
+          patch :cancel
+        end
+      end
     end
   end
   # Reveal health status on /up that returns 200 if the app boots with no exceptions, otherwise 500.
