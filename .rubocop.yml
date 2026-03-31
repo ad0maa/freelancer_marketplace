@@ -23,6 +23,10 @@ Metrics/BlockLength:
 
 RSpec/MultipleExpectations:
   Max: 2
+  Exclude:
+    - 'spec/requests/**/*'
 
 RSpec/ExampleLength:
   Max: 10
+  Exclude:
+    - 'spec/requests/**/*'
