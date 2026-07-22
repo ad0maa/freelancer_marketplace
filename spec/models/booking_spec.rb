@@ -3,44 +3,51 @@ require 'rails_helper'
 RSpec.describe Booking, type: :model do
   describe 'validations' do
     it 'is valid with a client, freelancer, dates, and amount' do
-      booking = described_class.new(
-        client: create(:client),
-        freelancer: create(:freelancer),
-        start_date: Date.tomorrow,
-        end_date: 1.week.from_now.to_date,
-        total_amount: 500.00
-      )
-      expect(booking).to be_valid
+      expect(build(:booking)).to be_valid
+    end
+
+    it 'is invalid without a client' do
+      booking = build(:booking, client: nil)
+      expect(booking).not_to be_valid
+    end
+
+    it 'is invalid without a freelancer' do
+      booking = build(:booking, freelancer: nil)
+      expect(booking).not_to be_valid
     end
 
     it 'is invalid without a start date' do
-      booking = described_class.new(start_date: nil)
+      booking = build(:booking, start_date: nil)
       expect(booking).not_to be_valid
       expect(booking.errors[:start_date]).to include("can't be blank")
     end
 
     it 'is invalid without an end date' do
-      booking = described_class.new(end_date: nil)
+      booking = build(:booking, end_date: nil)
       expect(booking).not_to be_valid
       expect(booking.errors[:end_date]).to include("can't be blank")
     end
 
     it 'is invalid when end date is before start date' do
-      booking = described_class.new(
-        client: create(:client),
-        freelancer: create(:freelancer),
-        start_date: Date.tomorrow,
-        end_date: Date.today,
-        total_amount: 500.00
-      )
+      booking = build(:booking, start_date: Date.tomorrow, end_date: Date.today)
+      expect(booking).not_to be_valid
+      expect(booking.errors[:end_date]).to include('must be after start date')
+    end
+
+    it 'is invalid when end date equals start date' do
+      booking = build(:booking, start_date: Date.tomorrow, end_date: Date.tomorrow)
       expect(booking).not_to be_valid
       expect(booking.errors[:end_date]).to include('must be after start date')
     end
 
     it 'is invalid with a negative total amount' do
-      booking = described_class.new(total_amount: -100)
+      booking = build(:booking, total_amount: -100)
       expect(booking).not_to be_valid
       expect(booking.errors[:total_amount]).to include('must be greater than or equal to 0')
+    end
+
+    it 'is valid with a total amount of zero' do
+      expect(build(:booking, total_amount: 0)).to be_valid
     end
   end
 

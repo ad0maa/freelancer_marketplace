@@ -11,6 +11,14 @@ RSpec.describe 'Api::V1::Bookings', type: :request do
       json = JSON.parse(response.body)
       expect(json.length).to eq(3)
     end
+
+    it 'returns an empty array when no bookings exist' do
+      get '/api/v1/bookings'
+
+      expect(response).to have_http_status(:ok)
+      json = JSON.parse(response.body)
+      expect(json).to eq([])
+    end
   end
 
   describe 'POST /api/v1/bookings' do
@@ -42,6 +50,25 @@ RSpec.describe 'Api::V1::Bookings', type: :request do
 
       expect(response).to have_http_status(:unprocessable_content)
     end
+
+    it 'returns error when end date is before start date' do
+      client = create(:client)
+      freelancer = create(:freelancer)
+
+      params = {
+        booking: {
+          client_id: client.id,
+          freelancer_id: freelancer.id,
+          start_date: 1.week.from_now.to_date,
+          end_date: Date.tomorrow,
+          total_amount: 500.00
+        }
+      }
+
+      post '/api/v1/bookings', params: params
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
   end
 
   describe 'PATCH /api/v1/bookings/:id/confirm' do
@@ -62,6 +89,20 @@ RSpec.describe 'Api::V1::Bookings', type: :request do
 
       expect(response).to have_http_status(:unprocessable_content)
     end
+
+    it 'rejects confirming a cancelled booking' do
+      booking = create(:booking, status: :cancelled)
+
+      patch "/api/v1/bookings/#{booking.id}/confirm"
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
+
+    it 'returns 404 when booking not found' do
+      patch '/api/v1/bookings/999/confirm'
+
+      expect(response).to have_http_status(:not_found)
+    end
   end
 
   describe 'PATCH /api/v1/bookings/:id/complete' do
@@ -74,6 +115,14 @@ RSpec.describe 'Api::V1::Bookings', type: :request do
       json = JSON.parse(response.body)
       expect(json['status']).to eq('completed')
     end
+
+    it 'rejects completing a pending booking' do
+      booking = create(:booking, status: :pending)
+
+      patch "/api/v1/bookings/#{booking.id}/complete"
+
+      expect(response).to have_http_status(:unprocessable_content)
+    end
   end
 
   describe 'PATCH /api/v1/bookings/:id/cancel' do
@@ -85,6 +134,24 @@ RSpec.describe 'Api::V1::Bookings', type: :request do
       expect(response).to have_http_status(:ok)
       json = JSON.parse(response.body)
       expect(json['status']).to eq('cancelled')
+    end
+
+    it 'cancels a confirmed booking' do
+      booking = create(:booking, status: :confirmed)
+
+      patch "/api/v1/bookings/#{booking.id}/cancel"
+
+      expect(response).to have_http_status(:ok)
+      json = JSON.parse(response.body)
+      expect(json['status']).to eq('cancelled')
+    end
+
+    it 'rejects cancelling an already completed booking' do
+      booking = create(:booking, status: :completed)
+
+      patch "/api/v1/bookings/#{booking.id}/cancel"
+
+      expect(response).to have_http_status(:unprocessable_content)
     end
   end
 end

@@ -19,7 +19,7 @@ module Api
         if freelancer.save
           render json: freelancer, status: :created
         else
-          render json: { errors: freelancer.errors }, status: :unprocessable_entity
+          render json: { errors: freelancer.errors }, status: :unprocessable_content
         end
       end
 
@@ -28,7 +28,7 @@ module Api
         if freelancer.update(freelancer_params)
           render json: freelancer
         else
-          render json: { errors: freelancer.errors }, status: :unprocessable_entity
+          render json: { errors: freelancer.errors }, status: :unprocessable_content
         end
       rescue ActiveRecord::RecordNotFound
         render json: { error: "Freelancer not found" }, status: :not_found

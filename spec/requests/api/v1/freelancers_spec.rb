@@ -63,7 +63,17 @@ RSpec.describe 'Api::V1::Freelancers', type: :request do
 
       post '/api/v1/freelancers', params: params
 
-      expect(response).to have_http_status(:unprocessable_entity)
+      expect(response).to have_http_status(:unprocessable_content)
+      json = JSON.parse(response.body)
+      expect(json['errors']).to be_present
+    end
+
+    it 'returns errors when email is malformed' do
+      params = { freelancer: { name: 'Jane', email: 'not-an-email', hourly_rate: 50 } }
+
+      post '/api/v1/freelancers', params: params
+
+      expect(response).to have_http_status(:unprocessable_content)
       json = JSON.parse(response.body)
       expect(json['errors']).to be_present
     end
@@ -80,6 +90,23 @@ RSpec.describe 'Api::V1::Freelancers', type: :request do
       json = JSON.parse(response.body)
       expect(json['name']).to eq('Updated Name')
     end
+
+    it 'returns errors with invalid params' do
+      freelancer = create(:freelancer)
+      params = { freelancer: { name: '', email: '' } }
+
+      patch "/api/v1/freelancers/#{freelancer.id}", params: params
+
+      expect(response).to have_http_status(:unprocessable_content)
+      json = JSON.parse(response.body)
+      expect(json['errors']).to be_present
+    end
+
+    it 'returns 404 when freelancer not found' do
+      patch '/api/v1/freelancers/999', params: { freelancer: { name: 'Ghost' } }
+
+      expect(response).to have_http_status(:not_found)
+    end
   end
 
   describe 'DELETE /api/v1/freelancers/:id' do
@@ -90,6 +117,12 @@ RSpec.describe 'Api::V1::Freelancers', type: :request do
 
       expect(response).to have_http_status(:no_content)
       expect(Freelancer.find_by(id: freelancer.id)).to be_nil
+    end
+
+    it 'returns 404 when freelancer not found' do
+      delete '/api/v1/freelancers/999'
+
+      expect(response).to have_http_status(:not_found)
     end
   end
 end
