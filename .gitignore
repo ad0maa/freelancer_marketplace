@@ -32,3 +32,6 @@
 /config/*.key
 
 postman/
+
+# Ignore SimpleCov coverage reports (generated artifact).
+/coverage/
