@@ -1,0 +1,66 @@
+# ---------------------------------------------------------------------------
+# Pipeline configuration.
+#
+# Nothing in the pipeline code hardcodes a path, a table name or a date range.
+# That is not architecture-astronaut purity: on Databricks the same code has to
+# run against a dev catalog, a prod catalog and a per-developer sandbox, and the
+# only thing that changes between them is this file (or the bundle variables in
+# databricks.yml that override it).
+# ---------------------------------------------------------------------------
+
+project: sportsbet_demo
+
+# Unity Catalog catalog name per environment.
+# Locally there is no Unity Catalog, so we use Spark's built-in catalog
+# (`spark_catalog`) and the exact same three-part naming still works:
+#   spark_catalog.gold.fact_bet_leg   (laptop)
+#   sportsbet_demo.gold.fact_bet_leg  (Databricks)
+catalog:
+  local: spark_catalog
+  databricks: sportsbet_demo
+
+# One schema (database) per medallion layer. Real wagering platforms split these
+# further by domain (betting, payments, crm) but the layer boundary is the one
+# that matters for access control: analysts get gold, engineers get silver.
+schemas:
+  bronze: bronze
+  silver: silver
+  vault: raw_vault
+  gold: gold
+  dq: dq
+
+# `delta` everywhere in production. Parquet is only here as an escape hatch for
+# environments where the Delta jars cannot be fetched - the pipeline degrades to
+# read-modify-write instead of MERGE, which is slower but still correct.
+table_format: delta
+
+paths:
+  landing: data/landing        # stands in for an S3/ADLS landing zone
+  warehouse: data/warehouse    # stands in for the Unity Catalog managed location
+  metastore: data/metastore_db # local Derby metastore (Databricks has UC instead)
+  checkpoints: data/_checkpoints
+
+spark:
+  # Australia/Melbourne, not UTC. A wagering day is a local business day: the
+  # Saturday AFL turnover figure has to line up with what the traders saw, and
+  # an off-by-one timezone bug silently moves millions of dollars of turnover
+  # into the wrong reporting day.
+  timezone: Australia/Melbourne
+  shuffle_partitions: 8        # tiny demo data; a real job leaves AQE to decide
+  log_level: WARN
+
+# Synthetic source system generator. Seeded, so every run of this demo produces
+# byte-identical source data - which is what makes the idempotency test honest.
+generator:
+  seed: 42
+  customers: 600
+  events: 140
+  bets: 5000
+  start_date: "2026-06-01"
+  end_date: "2026-06-28"
+  overround: 1.065              # ~6.5% theoretical book margin
+  # Batch 2 simulates the next day's incremental load: customer attribute
+  # changes (address moves, self-exclusions), new bets, and settlements landing
+  # late for bets that were placed in batch 1.
+  batch2_customer_changes: 45
+  batch2_bets: 1200

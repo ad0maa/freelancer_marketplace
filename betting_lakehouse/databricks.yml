@@ -1,0 +1,191 @@
+# ---------------------------------------------------------------------------
+# Databricks Asset Bundle.
+#
+# This is how a Databricks project is deployed in 2026. Before bundles, people
+# clicked jobs together in the UI and the definition lived nowhere - you could
+# not review it, diff it, or promote it from dev to prod without repeating the
+# clicking. A bundle puts the job, its cluster, its schedule and its permissions
+# in the repo next to the code that runs.
+#
+#   databricks bundle validate                 # check it
+#   databricks bundle deploy --target dev      # push code + job to the workspace
+#   databricks bundle run betting_lakehouse    # run it now
+#   databricks bundle deploy --target prod     # same definition, prod config
+#
+# Nothing in this file is needed for the local demo. It is here because "how does
+# this actually get deployed" is the question a Databricks interview will ask, and
+# the answer is a file like this one.
+# ---------------------------------------------------------------------------
+bundle:
+  name: betting_lakehouse
+
+variables:
+  catalog:
+    description: Unity Catalog catalog to build into
+    default: sportsbet_demo
+  landing_root:
+    description: Cloud storage location the source extracts land in
+    default: abfss://landing@sportsbetdemo.dfs.core.windows.net/wagering
+
+resources:
+  jobs:
+    betting_lakehouse:
+      name: "[${bundle.target}] betting lakehouse - medallion + vault + marts"
+
+      # Every task writes its own layer, so a failure is always attributable to
+      # one layer and can be retried from there rather than from the beginning.
+      tasks:
+        - task_key: bronze_ingest
+          job_cluster_key: pipeline_cluster
+          # Automatic retries are only safe on an idempotent task. Re-running a
+          # bronze load replaces the batch instead of appending it again (see
+          # io_utils.replace_batch), so a retry cannot duplicate raw rows.
+          max_retries: 2
+          min_retry_interval_millis: 60000
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-bronze
+            parameters: ["--batch", "1", "--landing", "${var.landing_root}"]
+
+        - task_key: silver_cleanse
+          depends_on: [{ task_key: bronze_ingest }]
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-silver
+            parameters: ["--batch", "1"]
+
+        # The three vault loads fan out deliberately. Hubs, links and satellites
+        # never read each other, so they are independent tasks and Databricks runs
+        # them concurrently - which is a property of Data Vault, not of this repo.
+        - task_key: vault_hubs
+          depends_on: [{ task_key: silver_cleanse }]
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-vault-hubs
+            parameters: ["--batch", "1"]
+
+        - task_key: vault_links
+          depends_on: [{ task_key: silver_cleanse }]
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-vault-links
+            parameters: ["--batch", "1"]
+
+        - task_key: vault_satellites
+          depends_on: [{ task_key: silver_cleanse }]
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-vault-satellites
+            parameters: ["--batch", "1"]
+
+        - task_key: gold_dimensions
+          depends_on:
+            - { task_key: vault_hubs }
+            - { task_key: vault_satellites }
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-gold-dimensions
+            parameters: ["--batch", "1"]
+
+        # Facts wait for dimensions because they look surrogate keys up in them.
+        - task_key: gold_facts
+          depends_on:
+            - { task_key: gold_dimensions }
+            - { task_key: vault_links }
+          job_cluster_key: pipeline_cluster
+          python_wheel_task:
+            package_name: betting_lakehouse
+            entry_point: lakehouse-gold-facts
+            parameters: ["--batch", "1"]
+
+        # A final gate. If the marts fail their checks the job goes red, so the
+        # dashboards that read them are known-bad rather than quietly wrong.
+        - task_key: dq_gate
+          depends_on: [{ task_key: gold_facts }]
+          job_cluster_key: pipeline_cluster
+          notebook_task:
+            notebook_path: ./notebooks/05_analytics_and_rg.py
+            base_parameters:
+              catalog: ${var.catalog}
+
+      job_clusters:
+        - job_cluster_key: pipeline_cluster
+          new_cluster:
+            spark_version: 16.4.x-scala2.13
+            # Job clusters, not all-purpose clusters. A job cluster starts for
+            # the run and terminates after it, and is billed at roughly half the
+            # DBU rate of an interactive cluster. Running scheduled work on an
+            # all-purpose cluster is the most common way a Databricks bill
+            # doubles for no benefit.
+            node_type_id: Standard_D4ds_v5      # Azure; use m5d.xlarge on AWS
+            data_security_mode: SINGLE_USER      # required for Unity Catalog
+            autoscale:
+              min_workers: 2
+              max_workers: 8
+            spark_conf:
+              spark.databricks.delta.optimizeWrite.enabled: "true"
+              spark.databricks.delta.autoCompact.enabled: "true"
+            spark_env_vars:
+              # Every task in the run resolves its catalog from this one variable,
+              # so no task can write to a different catalog than its siblings.
+              LAKEHOUSE_CATALOG: ${var.catalog}
+            azure_attributes:
+              availability: SPOT_WITH_FALLBACK_AZURE
+              spot_bid_max_price: -1
+
+      schedule:
+        # 05:15 Melbourne time - after overnight settlement has finished and
+        # before the trading desk starts asking questions about yesterday.
+        quartz_cron_expression: "0 15 5 * * ?"
+        timezone_id: Australia/Melbourne
+        pause_status: UNPAUSED
+
+      queue:
+        enabled: true
+
+      email_notifications:
+        on_failure: ["data-platform-oncall@example.com"]
+
+      # One run at a time. Two concurrent runs of the same batch would still be
+      # *correct* here - the loads are idempotent - but they would fight over the
+      # same Delta commits and lose time to conflict retries.
+      max_concurrent_runs: 1
+
+  pipelines:
+    betting_dlt:
+      name: "[${bundle.target}] betting lakehouse - DLT variant"
+      catalog: ${var.catalog}
+      schema: dlt_gold
+      serverless: true
+      libraries:
+        - file:
+            path: ./dlt/betting_dlt_pipeline.py
+      configuration:
+        catalog: ${var.catalog}
+        landing_root: ${var.landing_root}
+
+targets:
+  dev:
+    mode: development     # prefixes everything with your username, pauses schedules
+    default: true
+    variables:
+      catalog: sportsbet_demo_dev
+    workspace:
+      host: https://adb-0000000000000000.0.azuredatabricks.net
+
+  prod:
+    mode: production      # blocks deploying with uncommitted changes
+    variables:
+      catalog: sportsbet_demo
+    workspace:
+      host: https://adb-0000000000000000.0.azuredatabricks.net
+      root_path: /Shared/.bundle/prod/${bundle.name}
+    run_as:
+      # Production jobs run as a service principal, never as a person. Otherwise
+      # the pipeline breaks the day that person's account is disabled.
+      service_principal_name: sp-data-platform

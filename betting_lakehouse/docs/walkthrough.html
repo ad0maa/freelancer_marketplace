@@ -1,0 +1,786 @@
+<title>Inside a wagering lakehouse</title>
+
+<style>
+  /* ---------------------------------------------------------------- tokens */
+  :root {
+    color-scheme: light dark;
+
+    /* Neutrals carry a slight green-grey bias, picked to sit with the racing
+       green accent rather than a default pure grey. */
+    --paper:      #F1F3F2;
+    --paper-2:    #FBFCFB;
+    --paper-3:    #E7EBE9;
+    --ink:        #12191C;
+    --ink-2:      #47555A;
+    --ink-3:      #6E7C80;
+    --rule:       #CBD3D0;
+    --rule-soft:  #DDE3E1;
+
+    --accent:     #00805C;   /* racing green - structure, links, positives */
+    --accent-ink: #00654A;
+    /* Two tokens per data colour, on purpose. --gold / --loss are the validated
+       mark steps used for bar fills; --gold-ink / --loss-ink are lifted variants
+       for small text, which needs more contrast than a 11px block of colour. */
+    --gold:       #B5842A;   /* magnitude bars */
+    --gold-ink:   #92681C;   /* money figures as text */
+    --loss:       #C0392B;   /* negative hold bars */
+    --loss-ink:   #A82D1F;   /* negative figures as text */
+
+    /* Layer identities. The first three are the medallion's own names, so the
+       colour is content, not decoration. The vault gets a slate that sits
+       outside the metal sequence, because it is not part of it. */
+    --bronze:     #A5673F;
+    --silver:     #7E8F91;
+    --goldl:      #B5842A;
+    --vault:      #3D5E6E;
+
+    --shadow: 0 1px 2px rgba(18,25,28,.06), 0 8px 24px -18px rgba(18,25,28,.28);
+
+    --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
+    --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+             "Times New Roman", serif;
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Code", "Roboto Mono",
+            Menlo, Consolas, monospace;
+
+    --measure: 66ch;
+    --board: 1010px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper:     #0F1416;
+      --paper-2:   #151C1E;
+      --paper-3:   #1C2427;
+      --ink:       #E6EBE9;
+      --ink-2:     #A3B0B2;
+      --ink-3:     #7C8A8C;
+      --rule:      #2A3437;
+      --rule-soft: #202A2C;
+      --accent:    #35B58C;
+      --accent-ink:#4FC79E;
+      --bronze:    #C2825A;
+      --silver:    #9BABAD;
+      --vault:     #6E97A9;
+      --gold-ink:  #D9A544;
+      --loss-ink:  #EC8873;
+      --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.8);
+    }
+  }
+  /* The viewer's own toggle must win over the OS preference, both directions. */
+  :root[data-theme="light"] {
+    --paper: #F1F3F2; --paper-2: #FBFCFB; --paper-3: #E7EBE9;
+    --ink: #12191C; --ink-2: #47555A; --ink-3: #6E7C80;
+    --rule: #CBD3D0; --rule-soft: #DDE3E1;
+    --accent: #00805C; --accent-ink: #00654A;
+    --bronze: #A5673F; --silver: #7E8F91; --vault: #3D5E6E;
+    --gold-ink: #92681C; --loss-ink: #A82D1F;
+    --shadow: 0 1px 2px rgba(18,25,28,.06), 0 8px 24px -18px rgba(18,25,28,.28);
+  }
+  :root[data-theme="dark"] {
+    --paper: #0F1416; --paper-2: #151C1E; --paper-3: #1C2427;
+    --ink: #E6EBE9; --ink-2: #A3B0B2; --ink-3: #7C8A8C;
+    --rule: #2A3437; --rule-soft: #202A2C;
+    --accent: #35B58C; --accent-ink: #4FC79E;
+    --bronze: #C2825A; --silver: #9BABAD; --vault: #6E97A9;
+    --gold-ink: #D9A544; --loss-ink: #EC8873;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 10px 30px -20px rgba(0,0,0,.8);
+  }
+
+  /* ------------------------------------------------------------------ base */
+  .pg { background: var(--paper); color: var(--ink); font-family: var(--serif);
+        font-size: 1.0625rem; line-height: 1.62; -webkit-font-smoothing: antialiased; }
+  .pg *, .pg *::before, .pg *::after { box-sizing: border-box; }
+  .wrap { max-width: var(--board); margin: 0 auto; padding: 0 clamp(1.1rem, 4vw, 2.5rem); }
+  .col { max-width: var(--measure); }
+
+  .pg p { margin: 0 0 1.05em; }
+  .pg p:last-child { margin-bottom: 0; }
+  .pg strong { font-weight: 650; }
+  .pg em { font-style: italic; }
+  .pg a { color: var(--accent-ink); text-decoration: underline;
+          text-decoration-thickness: 1px; text-underline-offset: 2.5px; }
+  .pg a:hover { text-decoration-thickness: 2px; }
+  .pg :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  h1, h2, h3, h4 { font-family: var(--sans); font-weight: 700;
+                   letter-spacing: -0.025em; text-wrap: balance; margin: 0; }
+
+  .eyebrow { font-family: var(--mono); font-size: .68rem; font-weight: 600;
+             letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+  .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .num  { font-family: var(--mono); font-variant-numeric: tabular-nums;
+          font-feature-settings: "tnum" 1; }
+
+  /* ---------------------------------------------------------------- header */
+  .masthead { border-bottom: 1px solid var(--rule); padding: clamp(2.4rem,7vw,4.6rem) 0 2.2rem; }
+  .masthead .kicker { display: flex; flex-wrap: wrap; gap: .5rem .9rem; align-items: baseline;
+                      margin-bottom: 1.6rem; }
+  h1 { font-size: clamp(2.05rem, 6.2vw, 3.6rem); line-height: 1.03; letter-spacing: -0.035em; }
+  h1 .sub { display: block; color: var(--ink-3); font-weight: 600;
+            font-size: clamp(1rem, 2.6vw, 1.4rem); letter-spacing: -0.02em;
+            margin-top: .7rem; line-height: 1.28; }
+  .standfirst { margin-top: 1.5rem; font-size: 1.16rem; color: var(--ink-2); max-width: 60ch; }
+
+  /* ------------------------------------------------------------ pull quote */
+  .quote { margin: 2.2rem 0 0; padding: 1.1rem 0 1.1rem 1.3rem;
+           border-left: 3px solid var(--accent); max-width: 56ch; }
+  .quote p { font-family: var(--sans); font-size: 1.06rem; font-weight: 450;
+             line-height: 1.45; color: var(--ink); margin: 0 0 .45em; }
+  .quote cite { font-family: var(--mono); font-size: .7rem; font-style: normal;
+                letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); }
+
+  /* ------------------------------------------------------------------ tiles */
+  .tiles { display: grid; gap: 1px; background: var(--rule);
+           grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+           border: 1px solid var(--rule); margin: 2.6rem 0 0; }
+  .tile { background: var(--paper-2); padding: 1.05rem 1.1rem 1.15rem; }
+  .tile .v { font-family: var(--mono); font-variant-numeric: tabular-nums;
+             font-size: 1.65rem; font-weight: 600; letter-spacing: -0.03em;
+             line-height: 1.1; display: block; }
+  .tile .l { font-family: var(--mono); font-size: .66rem; letter-spacing: .1em;
+             text-transform: uppercase; color: var(--ink-3); margin-top: .5rem; display: block; }
+  .tile.money .v { color: var(--gold-ink); }
+
+  /* --------------------------------------------------------------- sections */
+  section { padding: clamp(2.6rem, 7vw, 4.4rem) 0; border-bottom: 1px solid var(--rule); }
+  section:last-of-type { border-bottom: 0; }
+  .shead { display: flex; gap: 1rem; align-items: baseline; margin-bottom: 1.5rem; }
+  .shead .ord { font-family: var(--mono); font-size: .72rem; font-weight: 600;
+                color: var(--accent-ink); letter-spacing: .08em; padding-top: .45rem; }
+  h2 { font-size: clamp(1.4rem, 3.6vw, 2rem); line-height: 1.12; }
+  h2 + .lede { margin-top: .9rem; color: var(--ink-2); }
+  h3 { font-size: 1.06rem; letter-spacing: -0.015em; margin: 2.1rem 0 .7rem; }
+  h4 { font-family: var(--mono); font-size: .68rem; font-weight: 600; letter-spacing: .12em;
+       text-transform: uppercase; color: var(--ink-3); margin: 0 0 .6rem; }
+
+  /* ------------------------------------------------------------ layer stack */
+  .stack { display: grid; gap: 10px; margin-top: 2rem; }
+  .layer { background: var(--paper-2); border: 1px solid var(--rule);
+           border-left: 4px solid var(--lc, var(--rule));
+           display: grid; grid-template-columns: minmax(0,1fr) auto;
+           gap: .6rem 1.4rem; align-items: start; padding: 1rem 1.15rem; }
+  .layer .lname { font-family: var(--mono); font-size: .72rem; font-weight: 600;
+                  letter-spacing: .12em; text-transform: uppercase; color: var(--lc);
+                  margin-bottom: .3rem; }
+  .layer .ldesc { font-size: .96rem; color: var(--ink-2); max-width: 62ch; }
+  .layer .ldesc b { color: var(--ink); font-weight: 600; }
+  .layer .lcounts { font-family: var(--mono); font-size: .74rem;
+                    font-variant-numeric: tabular-nums; color: var(--ink-3);
+                    text-align: right; line-height: 1.75; white-space: nowrap; }
+  .layer .lcounts span { color: var(--ink); }
+  .l-src   { --lc: var(--ink-3); }
+  .l-bronze{ --lc: var(--bronze); }
+  .l-silver{ --lc: var(--silver); }
+  .l-vault { --lc: var(--vault); }
+  .l-gold  { --lc: var(--goldl); }
+  @media (max-width: 620px) {
+    .layer { grid-template-columns: minmax(0,1fr); }
+    .layer .lcounts { text-align: left; }
+  }
+
+  /* -------------------------------------------------------------- bet trace */
+  .trace { display: grid; gap: 0; margin-top: 1.8rem; border: 1px solid var(--rule);
+           background: var(--paper-2); }
+  .step { display: grid; grid-template-columns: 9.5rem minmax(0,1fr);
+          border-top: 1px solid var(--rule-soft); }
+  .step:first-child { border-top: 0; }
+  .step .sl { padding: 1rem .9rem 1.1rem 1.15rem; border-right: 1px solid var(--rule-soft);
+              background: var(--paper-3); }
+  .step .sl .n { font-family: var(--mono); font-size: .68rem; font-weight: 600;
+                 letter-spacing: .12em; text-transform: uppercase; color: var(--lc, var(--ink-3)); }
+  .step .sl .w { font-size: .82rem; color: var(--ink-3); margin-top: .3rem; line-height: 1.4; }
+  .step .sb { padding: 1rem 1.15rem 1.1rem; min-width: 0; }
+  .step .sb .note { font-size: .92rem; color: var(--ink-2); margin-top: .7rem; max-width: 58ch; }
+  .step .sb .note b { color: var(--ink); font-weight: 600; }
+  @media (max-width: 620px) {
+    .step { grid-template-columns: minmax(0,1fr); }
+    .step .sl { border-right: 0; border-bottom: 1px solid var(--rule-soft);
+                padding: .7rem 1rem; display: flex; gap: .8rem; align-items: baseline; }
+    .step .sl .w { margin-top: 0; }
+  }
+
+  pre.code { font-family: var(--mono); font-size: .76rem; line-height: 1.65; margin: 0;
+             overflow-x: auto; padding: .75rem .85rem; background: var(--paper-3);
+             border: 1px solid var(--rule-soft); color: var(--ink);
+             font-variant-numeric: tabular-nums; }
+  pre.code .k { color: var(--ink-3); }
+  pre.code .hi { color: var(--loss-ink); font-weight: 600; }
+  pre.code .ok { color: var(--accent-ink); font-weight: 600; }
+  pre.code .g  { color: var(--gold-ink); font-weight: 600; }
+
+  /* ----------------------------------------------------------------- tables */
+  .tscroll { overflow-x: auto; margin-top: 1.5rem; border: 1px solid var(--rule); }
+  table { border-collapse: collapse; width: 100%; font-family: var(--mono);
+          font-size: .78rem; font-variant-numeric: tabular-nums; background: var(--paper-2); }
+  caption { text-align: left; font-family: var(--mono); font-size: .66rem;
+            letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+            padding: .8rem 1rem .1rem; }
+  th { text-align: left; font-weight: 600; color: var(--ink-3); font-size: .66rem;
+       letter-spacing: .08em; text-transform: uppercase; padding: .7rem .85rem;
+       border-bottom: 1px solid var(--rule); white-space: nowrap; }
+  td { padding: .55rem .85rem; border-bottom: 1px solid var(--rule-soft); vertical-align: middle; }
+  tr:last-child td { border-bottom: 0; }
+  td.r, th.r { text-align: right; }
+  tbody tr:hover td { background: var(--paper-3); }
+  .lbl { font-family: var(--sans); font-size: .84rem; font-weight: 500; white-space: nowrap; }
+
+  /* -------------------------------------------------------------- bar marks */
+  /* display:block matters - a span is inline by default and inline boxes ignore
+     height, so the bar would silently collapse to nothing. */
+  .bar { --w: 0%; display: block; position: relative; height: 11px;
+         width: 100%; min-width: 110px; background: var(--rule-soft); border-radius: 2px; }
+  .bar::before { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w);
+                 background: var(--gold); border-radius: 2px 3px 3px 2px; }
+  tr:hover .bar::before { filter: saturate(1.25) brightness(1.06); }
+  th.bcol, td.bcol { width: 24%; min-width: 130px; }
+  th.dcol, td.dcol { width: 15%; min-width: 118px; }
+
+  /* Diverging: two hues either side of a neutral zero rule. Direction and the
+     signed label both encode polarity, so colour is never the only cue. */
+  .div { display: block; position: relative; height: 11px; width: 100%; min-width: 108px; }
+  .div::after { content: ""; position: absolute; left: 50%; top: -2px; bottom: -2px;
+                width: 1px; background: var(--rule); }
+  .div i { position: absolute; top: 0; bottom: 0; display: block; }
+  .div i.pos { left: 50%; background: var(--accent); border-radius: 0 3px 3px 0; }
+  .div i.neg { right: 50%; background: var(--loss); border-radius: 3px 0 0 3px; }
+
+  /* --------------------------------------------------------------- callouts */
+  .callout { border: 1px solid var(--rule); border-top: 3px solid var(--accent);
+             background: var(--paper-2); padding: 1.15rem 1.25rem; margin-top: 1.8rem;
+             box-shadow: var(--shadow); }
+  .callout.warn { border-top-color: var(--loss-ink); }
+  .callout .ct { font-family: var(--sans); font-weight: 650; font-size: .98rem;
+                 margin-bottom: .5rem; letter-spacing: -0.012em; }
+  .callout p { font-size: .96rem; color: var(--ink-2); max-width: 62ch; }
+  .callout p b, .callout p strong { color: var(--ink); }
+
+  .recon { display: grid; gap: .1rem .9rem; grid-template-columns: auto auto;
+           font-family: var(--mono); font-size: .82rem; font-variant-numeric: tabular-nums;
+           margin: .9rem 0 0; width: fit-content; }
+  .recon dt { color: var(--ink-3); }
+  .recon dd { margin: 0; color: var(--ink); }
+  .recon dd.eq { color: var(--accent-ink); font-weight: 600; }
+
+  /* ------------------------------------------------------------ two columns */
+  .duo { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+         grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); margin-top: 1.8rem; }
+  .duo > div { background: var(--paper-2); padding: 1.15rem 1.2rem 1.3rem; }
+  .duo ul { margin: 0; padding-left: 1.1rem; }
+  .duo li { font-size: .94rem; color: var(--ink-2); margin-bottom: .45em; }
+  .duo li:last-child { margin-bottom: 0; }
+  .duo li b { color: var(--ink); font-weight: 600; }
+
+  /* ---------------------------------------------------------------- glossary */
+  .gloss { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule);
+           grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); margin-top: 1.6rem; }
+  .gloss div { background: var(--paper-2); padding: .85rem 1rem 1rem; }
+  .gloss dt { font-family: var(--mono); font-size: .73rem; font-weight: 600;
+              letter-spacing: .04em; color: var(--ink); }
+  .gloss dd { margin: .35rem 0 0; font-size: .9rem; color: var(--ink-2); line-height: 1.5; }
+
+  /* ------------------------------------------------------------------- files */
+  .files { margin-top: 1.6rem; border: 1px solid var(--rule); background: var(--paper-2); }
+  .files li { display: grid; grid-template-columns: minmax(0,15rem) minmax(0,1fr);
+              gap: .3rem 1.2rem; padding: .7rem 1.1rem; border-top: 1px solid var(--rule-soft); }
+  .files li:first-child { border-top: 0; }
+  .files { list-style: none; padding: 0; }
+  .files code { font-family: var(--mono); font-size: .76rem; color: var(--ink);
+                word-break: break-all; }
+  .files span { font-size: .92rem; color: var(--ink-2); }
+  @media (max-width: 620px) { .files li { grid-template-columns: minmax(0,1fr); } }
+
+  footer { padding: 2.4rem 0 3.4rem; }
+  footer p { font-family: var(--mono); font-size: .74rem; color: var(--ink-3); max-width: 62ch; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pg *, .pg *::before, .pg *::after { transition: none !important; animation: none !important; }
+  }
+</style>
+
+<div class="pg">
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="kicker">
+      <span class="eyebrow">PySpark · Databricks · Data Vault 2.0 · Kimball</span>
+    </div>
+    <h1>Inside a wagering lakehouse
+      <span class="sub">What a Sportsbet-style data engineering role actually builds — traced through
+      one $18.04 multi, from a raw file to a margin number.</span></h1>
+
+    <p class="standfirst">A complete betting data platform that runs end to end on a laptop in about
+    four minutes: medallion architecture in PySpark, a Data Vault 2.0 raw vault as the system of
+    record, and Kimball star schemas on top. Every figure on this page came out of an actual run.</p>
+
+    <blockquote class="quote">
+      <p>“The data engineer role will mainly be creating pyspark pipelines in databricks. So data
+      modelling, using data vault and dimensional modelling.”</p>
+      <cite>The role, as described</cite>
+    </blockquote>
+
+    <div class="tiles">
+      <div class="tile"><span class="v">50</span><span class="l">tables built</span></div>
+      <div class="tile"><span class="v">6,191</span><span class="l">bets loaded</span></div>
+      <div class="tile money"><span class="v">$810,040</span><span class="l">turnover modelled</span></div>
+      <div class="tile"><span class="v">9.42%</span><span class="l">book hold</span></div>
+      <div class="tile"><span class="v">48</span><span class="l">tests passing</span></div>
+    </div>
+  </header>
+
+  <!-- =================================================== 1. the stack -->
+  <section>
+    <div class="shead"><span class="ord">01</span>
+      <div class="col">
+        <h2>Five stages, each with one job</h2>
+        <p class="lede">The rule that makes this work is that no stage does another stage's job. Bronze
+        does not clean. The vault does not interpret. The marts do not keep history they did not
+        derive.</p>
+      </div>
+    </div>
+
+    <div class="stack">
+      <div class="layer l-src">
+        <div>
+          <div class="lname">Source extracts</div>
+          <div class="ldesc">A CRM database, the betting engine, the pricing service, the payments
+          platform — landing as JSON and CSV. Deliberately dirty: duplicate rows from at-least-once
+          delivery, money as <b>"$1,250.00"</b>, three different date formats, padded business keys.</div>
+        </div>
+        <div class="lcounts">8 datasets<br>2 batches</div>
+      </div>
+
+      <div class="layer l-bronze">
+        <div>
+          <div class="lname">Bronze · land it, change nothing</div>
+          <div class="ldesc">Every column read as a string. Nothing cast, filtered or deduplicated,
+          plus four provenance columns. <b>It stores "$1,250.00" as "$1,250.00"</b> — which looks wrong
+          until you need to rebuild everything downstream in eighteen months, by which time the source
+          system has changed schema or been switched off.</div>
+        </div>
+        <div class="lcounts">bets <span>6,324</span><br>legs <span>9,373</span><br>customers <span>658</span></div>
+      </div>
+
+      <div class="layer l-silver">
+        <div>
+          <div class="lname">Silver · make it trustworthy</div>
+          <div class="ldesc">Typed, deduplicated, standardised, conformed. 133 duplicate and invalid
+          bets removed; nine zero-stake slips <b>quarantined rather than deleted</b>, with the reason
+          attached. Append-only, so batch 1's version of a customer survives batch 2.</div>
+        </div>
+        <div class="lcounts">bets <span>6,191</span><br>customers <span>645</span><br>quarantined <span>9</span></div>
+      </div>
+
+      <div class="layer l-vault">
+        <div>
+          <div class="lname">Raw vault · the system of record</div>
+          <div class="ldesc">Data Vault 2.0: business keys in <b>hubs</b>, relationships in <b>links</b>,
+          attributes with history in <b>satellites</b>. Insert-only and never rebuilt, so it can always
+          show what each system said and when. Loading the same batch twice inserts nothing.</div>
+        </div>
+        <div class="lcounts">5 hubs<br>4 links<br>7 satellites</div>
+      </div>
+
+      <div class="layer l-gold">
+        <div>
+          <div class="lname">Gold · the star schemas</div>
+          <div class="ldesc">Kimball marts rebuilt from the vault every run. All the business rules
+          live here, which is exactly why they are <b>disposable</b>: when a definition changes you
+          rebuild, and the vault's history is untouched because it never encoded the definition.</div>
+        </div>
+        <div class="lcounts">fact_bet_leg <span>9,359</span><br>fact_bet_settlement <span>6,191</span><br>6 dimensions</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================================================== 2. one bet -->
+  <section>
+    <div class="shead"><span class="ord">02</span>
+      <div class="col">
+        <h2>One bet, all the way through</h2>
+        <p class="lede">Bet <span class="mono">B0000010</span>: a four-leg multi, $18.04, taken on an
+        Android phone on 2 June. Here is the same row at every stage — this is the clearest way to see
+        what each layer is for.</p>
+      </div>
+    </div>
+
+    <div class="trace">
+      <div class="step" style="--lc: var(--ink-3)">
+        <div class="sl"><div class="n">Landing</div><div class="w">what the betting engine sent</div></div>
+        <div class="sb">
+<pre class="code">{"bet_id": "B0000010", "customer_id": "C000166", "bet_type": "MULTI",
+ "channel": "ANDROID_APP", <span class="hi">"stake_amount": "$18.04"</span>, "combined_odds": 15.8,
+ <span class="hi">"placed_at": "2026-06-02T14:20:53+10:00"</span>, "in_play_flag": "N", ... }</pre>
+          <p class="note">Money is a formatted <b>string</b>. The timestamp carries a <b>+10:00</b>
+          offset. Neither is usable as-is, and neither is the pipeline's problem yet.</p>
+        </div>
+      </div>
+
+      <div class="step" style="--lc: var(--bronze)">
+        <div class="sl"><div class="n">Bronze</div><div class="w">stored verbatim, plus provenance</div></div>
+        <div class="sb">
+<pre class="code"><span class="k">bet_id    stake_amount  placed_at                  _record_source</span>
+B0000010  <span class="hi">$18.04</span>        <span class="hi">2026-06-02T14:20:53+10:00</span>  betting_engine.bets</pre>
+          <p class="note">Unchanged on purpose. The added <span class="mono">_record_source</span>,
+          <span class="mono">_source_file</span>, <span class="mono">_batch_id</span> and
+          <span class="mono">_ingested_at</span> answer the first question of every data incident:
+          where did this row come from, and when did we get it.</p>
+        </div>
+      </div>
+
+      <div class="step" style="--lc: var(--silver)">
+        <div class="sl"><div class="n">Silver</div><div class="w">typed and standardised</div></div>
+        <div class="sb">
+<pre class="code"><span class="k">bet_id    stake_amount  combined_odds  placed_at            placed_date  is_in_play</span>
+B0000010  <span class="ok">18.04</span>         <span class="ok">15.800</span>         <span class="ok">2026-06-02 14:20:53</span>  2026-06-02   false</pre>
+          <p class="note"><b>decimal(18,2)</b>, not double — floating point cannot represent 0.10, and
+          a finance team reconciling turnover to the cent will find the drift. The timestamp is now in
+          Australia/Melbourne, because a wagering day is a local business day and an off-by-one moves
+          Saturday's AFL turnover into Friday.</p>
+        </div>
+      </div>
+
+      <div class="step" style="--lc: var(--vault)">
+        <div class="sl"><div class="n">Raw vault</div><div class="w">split into hub, link, satellite</div></div>
+        <div class="sb">
+<pre class="code"><span class="k">hub_bet             </span>  hk_bet <span class="g">cd8e95af8daa3d41…</span>   bet_id B0000010
+<span class="k">sat_bet_details     </span>  hash_diff <span class="g">4cb150a1c69a320c…</span>  MULTI  ANDROID_APP  18.04
+<span class="k">link_bet_selection  </span>  leg 1 → S0001062     leg 3 → S0000647
+                        leg 2 → S0000530     leg 4 → S0000573</pre>
+          <p class="note">One bet becomes rows in three table types. The hash key is SHA-256 of the
+          business key, computed independently by every job with no lookup — which is what lets hubs,
+          links and satellites load <b>in parallel, in any order</b>. The
+          <span class="mono">hash_diff</span> over the payload is how a satellite detects change:
+          one string comparison instead of forty nullable columns.</p>
+        </div>
+      </div>
+
+      <div class="step" style="--lc: var(--goldl)">
+        <div class="sl"><div class="n">Gold</div><div class="w">two facts, two grains</div></div>
+        <div class="sb">
+<pre class="code"><span class="k">fact_bet_leg          leg  legs_in_bet  odds_taken  bet_stake_amount  stake_allocated</span>
+                        1  4            1.790       <span class="hi">18.04</span>             <span class="ok">4.5100</span>
+                        2  4            1.900       <span class="hi">18.04</span>             <span class="ok">4.5100</span>
+                        3  4            2.300       <span class="hi">18.04</span>             <span class="ok">4.5100</span>
+                        4  4            2.020       <span class="hi">18.04</span>             <span class="ok">4.5100</span>
+
+<span class="k">fact_bet_settlement   stake_amount  combined_odds  payout  gross_win  status</span>
+                        <span class="ok">18.04</span>         15.800         0.00    18.04      LOST</pre>
+          <p class="note">Four leg rows and one slip row. Note <span class="mono">bet_stake_amount</span>
+          repeating down the leg fact — sum <em>that</em> and this $18.04 bet reports <b>$72.16</b> of
+          turnover. The allocated column exists so the leg grain has a measure you can safely add up.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- =================================================== 3. grain -->
+  <section>
+    <div class="shead"><span class="ord">03</span>
+      <div class="col">
+        <h2>The mistake that costs you the meeting</h2>
+        <p class="lede">Grain — what one row means — is the first modelling decision and the one that
+        breaks everything else if you get it wrong.</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <p>Sport belongs to a <strong>leg</strong>: a four-leg multi across AFL, NRL and two races has no
+      single sport. Stake belongs to the <strong>slip</strong>: the customer put down one amount. Those
+      are two different grains, so this platform has two fact tables, and stake never appears as an
+      additive measure on the leg one.</p>
+
+      <p>Put it there and sum it, and turnover is multiplied by the average number of legs. The number
+      still looks plausible — which is exactly why it survives review, and why it needs a test rather
+      than an eyeball.</p>
+    </div>
+
+    <div class="callout">
+      <div class="ct">The check that catches it</div>
+      <p>Sum the allocated stake across every one of the 9,359 leg rows. Sum the exact stake across
+      every one of the 6,191 slip rows. They must match to the cent — across any grouping, at any
+      grain.</p>
+      <dl class="recon">
+        <dt>leg fact, allocated</dt><dd>$810,040.43</dd>
+        <dt>slip fact, exact</dt><dd>$810,040.43</dd>
+        <dt>difference</dt><dd class="eq">$0.00</dd>
+      </dl>
+    </div>
+
+    <div class="callout warn">
+      <div class="ct">And the one that catches a missing fixture</div>
+      <p>Bets were placed on three fixtures whose reference data had not reached the warehouse yet.
+      <b>142 legs</b> loaded anyway, pointing at the <span class="mono">-1</span> unknown member, so
+      turnover was never understated. When batch 2 brought the fixtures in, the mart rebuild attached
+      them to the real events — no backfill, no correction. <b>8 remain</b>, and those are genuine
+      orphans: selection ids that appear on bet legs but exist in no pricing feed at all.</p>
+      <p style="margin-bottom:0">Dropping those rows instead would have made the warehouse quietly
+      disagree with the betting engine, which is the worse failure by a distance.</p>
+    </div>
+  </section>
+
+  <!-- =================================================== 4. two models -->
+  <section>
+    <div class="shead"><span class="ord">04</span>
+      <div class="col">
+        <h2>Why both models, not one</h2>
+        <p class="lede">Data Vault and dimensional modelling are not competitors. They optimise for
+        different things, and neither does the other's job.</p>
+      </div>
+    </div>
+
+    <div class="duo">
+      <div>
+        <h4>Raw vault — built for loading</h4>
+        <ul>
+          <li><b>Insert-only</b>, so it is auditable by construction. “What did we know about this
+          customer's self-exclusion status on the 14th” is a query.</li>
+          <li><b>No business rules.</b> If the CRM said VIC, the satellite says VIC.</li>
+          <li><b>Loads in parallel</b>, in any order — no hub reads a link.</li>
+          <li><b>Replayable</b>: the same batch twice inserts nothing.</li>
+          <li><b>Unqueryable by humans.</b> Reassembling one bet is a hub, a link and two satellites
+          with a latest-version window on each.</li>
+        </ul>
+      </div>
+      <div>
+        <h4>Star schema — built for asking</h4>
+        <ul>
+          <li><b>One join</b> from fact to dimension. Turnover by sport by channel is a single query
+          an analyst gets right first time.</li>
+          <li><b>All the business rules</b> live here: age bands, channel groupings, hold %.</li>
+          <li><b>Type 2 where it earns it.</b> A customer who moves NSW → VIC has two rows, so June's
+          bets stay NSW turnover and the jurisdictional return is right.</li>
+          <li><b>Rebuilt every run</b>, which is what makes changing a definition cheap.</li>
+          <li><b>No history it did not derive.</b> Everything traces back to the vault.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="callout">
+      <div class="ct">The join between them is smaller than it looks</div>
+      <p>A satellite stores only <span class="mono">load_date</span> — when a version started — because
+      writing an end date would mean updating the previous row and breaking the insert-only guarantee.
+      So end dates are derived at read time with one <span class="mono">lead()</span> window. <b>An
+      insert-only satellite plus a lead() window <em>is</em> a type 2 dimension.</b> That one function
+      is the whole bridge between the two modelling styles.</p>
+    </div>
+
+    <div class="tscroll">
+      <table>
+        <caption>dim_customer · one customer, two versions, after a self-exclusion in batch 2</caption>
+        <thead><tr><th>ver</th><th>state</th><th>account</th><th>self-excluded</th>
+          <th>effective from</th><th>effective to</th><th>current</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>SA</td><td>ACTIVE</td><td>false</td>
+            <td>1900-01-01 00:00:00</td><td>2026-06-28 11:59:59</td><td>false</td></tr>
+          <tr><td>2</td><td>SA</td><td>CLOSED</td><td style="color:var(--loss-ink);font-weight:600">true</td>
+            <td>2026-06-28 12:00:00</td><td>9999-12-31 23:59:59</td><td>true</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col" style="margin-top:1rem;font-size:.94rem;color:var(--ink-2)">Version 1 starts at
+    1900, not at the vault's load date. The vault records when we <em>learned</em> something, not when
+    it became <em>true</em>, so without back-dating, every bet placed before the first CRM extract
+    would fail its as-at join. That back-dating is a business rule — which is why it lives in the
+    mart and not in the vault.</p>
+  </section>
+
+  <!-- =================================================== 5. the numbers -->
+  <section>
+    <div class="shead"><span class="ord">05</span>
+      <div class="col">
+        <h2>What the marts are for</h2>
+        <p class="lede">Turnover is money staked. Gross win is turnover minus payouts. Hold % is the
+        margin the book actually realised — and it is the number the trading desk lives on.</p>
+      </div>
+    </div>
+
+    <div class="tscroll">
+      <table>
+        <caption>Turnover and realised hold by sport · 4 weeks, all channels</caption>
+        <thead>
+          <tr><th>Sport</th><th class="r">Turnover</th><th class="bcol">Share of turnover</th>
+            <th class="r">Gross win</th><th>Hold %</th><th class="r"></th><th class="r">Bets</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="lbl">Basketball</td><td class="r">$275,683</td>
+            <td class="bcol"><span class="bar" style="--w:100%"></span></td>
+            <td class="r">$32,512</td>
+            <td class="dcol"><span class="div"><i class="pos" style="width:23.6%"></i></span></td>
+            <td class="r">+11.79%</td><td class="r">2,497</td></tr>
+          <tr><td class="lbl">Soccer</td><td class="r">$141,536</td>
+            <td class="bcol"><span class="bar" style="--w:51.3%"></span></td>
+            <td class="r">$6,123</td>
+            <td class="dcol"><span class="div"><i class="pos" style="width:8.7%"></i></span></td>
+            <td class="r">+4.33%</td><td class="r">1,391</td></tr>
+          <tr><td class="lbl">AFL</td><td class="r">$134,056</td>
+            <td class="bcol"><span class="bar" style="--w:48.6%"></span></td>
+            <td class="r">$29,541</td>
+            <td class="dcol"><span class="div"><i class="pos" style="width:44.1%"></i></span></td>
+            <td class="r">+22.04%</td><td class="r">1,305</td></tr>
+          <tr><td class="lbl">Rugby League</td><td class="r">$116,431</td>
+            <td class="bcol"><span class="bar" style="--w:42.2%"></span></td>
+            <td class="r">−$4,542</td>
+            <td class="dcol"><span class="div"><i class="neg" style="width:7.8%"></i></span></td>
+            <td class="r" style="color:var(--loss-ink)">−3.90%</td><td class="r">1,163</td></tr>
+          <tr><td class="lbl">Horse Racing</td><td class="r">$113,050</td>
+            <td class="bcol"><span class="bar" style="--w:41.0%"></span></td>
+            <td class="r">$13,332</td>
+            <td class="dcol"><span class="div"><i class="pos" style="width:23.6%"></i></span></td>
+            <td class="r">+11.79%</td><td class="r">1,141</td></tr>
+          <tr><td class="lbl">Tennis</td><td class="r">$28,894</td>
+            <td class="bcol"><span class="bar" style="--w:10.5%"></span></td>
+            <td class="r">−$677</td>
+            <td class="dcol"><span class="div"><i class="neg" style="width:4.7%"></i></span></td>
+            <td class="r" style="color:var(--loss-ink)">−2.34%</td><td class="r">341</td></tr>
+          <tr><td class="lbl">Unknown</td><td class="r">$390</td>
+            <td class="bcol"><span class="bar" style="--w:0.5%"></span></td>
+            <td class="r">$15</td>
+            <td class="dcol"><span class="div"><i class="pos" style="width:7.9%"></i></span></td>
+            <td class="r">+3.97%</td><td class="r">8</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col" style="margin-top:1rem;font-size:.94rem;color:var(--ink-2)">Two sports show a
+    <em>negative</em> hold — the book lost money on them over four weeks. That is not a bug: hold is
+    volatile until a very large number of bets have settled, which is why traders watch it against the
+    margin that was priced in rather than against zero. The “Unknown” row is those eight orphan legs,
+    visible and countable instead of silently absorbed.</p>
+
+    <div class="tscroll">
+      <table>
+        <caption>Why multis get marketed so hard</caption>
+        <thead><tr><th>Bet type</th><th class="r">Bets</th><th class="r">Avg legs</th>
+          <th class="r">Turnover</th><th class="r">Hold %</th></tr></thead>
+        <tbody>
+          <tr><td class="lbl">Single</td><td class="r">4,477</td><td class="r">1.00</td>
+            <td class="r">$571,971</td><td class="r">6.93%</td></tr>
+          <tr><td class="lbl">Multi</td><td class="r">1,186</td><td class="r">3.05</td>
+            <td class="r">$157,956</td><td class="r" style="color:var(--gold-ink);font-weight:600">18.77%</td></tr>
+          <tr><td class="lbl">Same game multi</td><td class="r">528</td><td class="r">2.40</td>
+            <td class="r">$80,113</td><td class="r">8.74%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="col" style="margin-top:1rem;font-size:.94rem;color:var(--ink-2)">Every market is priced
+    with an <strong>overround</strong>: the implied probabilities (1 ÷ decimal odds) sum to more than
+    100%, and the excess is the margin. On a multi the odds multiply, so the margin compounds — three
+    legs at 6% each is closer to 19% than 6%. That single fact explains most of the commercial
+    behaviour of a modern bookmaker, and it falls straight out of the data model.</p>
+  </section>
+
+  <!-- =================================================== 6. idempotency -->
+  <section>
+    <div class="shead"><span class="ord">06</span>
+      <div class="col">
+        <h2>Running it twice changes nothing</h2>
+        <p class="lede">The least glamorous property in the whole build, and the one that decides
+        whether you get woken up.</p>
+      </div>
+    </div>
+
+    <div class="col">
+      <p>Bronze <em>replaces</em> a batch instead of appending it. Vault hubs and links anti-join on
+      the hash key. Satellites compare a <span class="mono">hash_diff</span> and insert only on a real
+      change. Marts are a full rebuild.</p>
+      <p>So re-running yesterday's job is a no-op rather than an incident, and every task in the
+      Databricks Workflow can carry automatic retries without anyone having to reason about what a
+      partial failure did. That is not a habit — it is designed in, at every layer.</p>
+    </div>
+
+    <div class="callout">
+      <div class="ct">Second run of batch 2, straight after the first</div>
+<pre class="code" style="margin-top:.6rem"><span class="k">hub_customer            </span>  <span class="ok">0</span> inserted
+<span class="k">hub_bet                 </span>  <span class="ok">0</span> inserted
+<span class="k">link_bet_selection      </span>  <span class="ok">0</span> inserted
+<span class="k">sat_customer_details    </span>  <span class="ok">0</span> inserted
+<span class="k">sat_bet_settlement      </span>  <span class="ok">0</span> inserted</pre>
+    </div>
+  </section>
+
+  <!-- =================================================== 7. vocabulary -->
+  <section>
+    <div class="shead"><span class="ord">07</span>
+      <div class="col">
+        <h2>The vocabulary</h2>
+        <p class="lede">Most of it turns up as column names. A few of these change how you model.</p>
+      </div>
+    </div>
+
+    <dl class="gloss">
+      <div><dt>Decimal odds</dt><dd>$10 at 2.50 returns $25 <em>including</em> stake. Implied
+        probability is 1 ÷ odds.</dd></div>
+      <div><dt>Overround</dt><dd>Implied probabilities across a market sum above 100%. The excess is
+        the margin priced in.</dd></div>
+      <div><dt>Turnover / handle</dt><dd>Total staked. A customer betting $10 twenty times is $200 of
+        turnover.</dd></div>
+      <div><dt>Gross win</dt><dd>Turnover minus payouts. Revenue before promotional cost.</dd></div>
+      <div><dt>GGR</dt><dd>Gross win net of bonuses. What regulators, the ASX and wagering taxes are
+        based on.</dd></div>
+      <div><dt>Hold %</dt><dd>Gross win ÷ turnover. The realised margin. Single digits and
+        volatile.</dd></div>
+      <div><dt>Multi / SGM</dt><dd>Several legs, all must win, odds multiply. An SGM's legs are all in
+        one event, so they are correlated.</dd></div>
+      <div><dt>Bet slip vs leg</dt><dd>One slip, one or many legs. This distinction <em>is</em> the
+        two-fact grain split.</dd></div>
+      <div><dt>Void / cashed out</dt><dd>Why payout is not simply zero or stake × odds, and why
+        settlement has four statuses.</dd></div>
+      <div><dt>Self-exclusion</dt><dd>BetStop. Must apply immediately everywhere, while history still
+        shows what came before — an argument for an insert-only vault.</dd></div>
+      <div><dt>Point of consumption tax</dt><dd>Each state taxes revenue from its own residents, so
+        jurisdiction is a tax calculation, not a report.</dd></div>
+      <div><dt>Unknown member</dt><dd>The <span class="mono">-1</span> dimension row that lets a fact
+        load when its dimension has not arrived.</dd></div>
+    </dl>
+  </section>
+
+  <!-- =================================================== 8. the repo -->
+  <section>
+    <div class="shead"><span class="ord">08</span>
+      <div class="col">
+        <h2>Where to look in the code</h2>
+        <p class="lede">About 3,000 lines. The comments carry the teaching, so read them in this
+        order.</p>
+      </div>
+    </div>
+
+    <ul class="files">
+      <li><code>docs/01_pyspark_primer.md</code><span>Shuffles, broadcast joins, window functions, and
+        the ANSI-mode change in Spark 4 that makes a bad cast abort your batch.</span></li>
+      <li><code>docs/03_data_vault_vs_dimensional.md</code><span>The long version of section 04,
+        including where each business rule belongs and why.</span></li>
+      <li><code>src/betting_lakehouse/vault/dv_helpers.py</code><span>The four generic Data Vault
+        loaders. Every one of the 16 vault tables is loaded by these — the code most worth reading
+        twice.</span></li>
+      <li><code>src/betting_lakehouse/gold/facts.py</code><span>Two grains, allocated measures, and the
+        as-at join onto the type 2 dimension.</span></li>
+      <li><code>src/betting_lakehouse/silver.py</code><span>Typing, deduplication, and ANSI-safe
+        parsing with <span class="mono">try_cast</span>.</span></li>
+      <li><code>notebooks/</code><span>The same five stages as runnable Databricks notebooks, in source
+        format so the diffs are reviewable.</span></li>
+      <li><code>databricks.yml</code><span>The Asset Bundle: task DAG, job clusters, schedule, dev and
+        prod targets, service principal.</span></li>
+      <li><code>sql/10_analytics_questions.sql</code><span>Twelve questions a wagering business
+        actually asks, including the responsible-gambling ones.</span></li>
+    </ul>
+
+    <div class="callout">
+      <div class="ct">To run it</div>
+<pre class="code" style="margin-top:.6rem">cd betting_lakehouse
+make setup     <span class="k"># venv + PySpark 4 + Delta Lake</span>
+make run       <span class="k"># two batches, end to end, ~4 minutes</span>
+make test      <span class="k"># 48 tests</span></pre>
+      <p style="margin-top:.9rem;margin-bottom:0">No Databricks account needed. Real Delta tables, a
+      real metastore, and a real <span class="mono">MERGE</span> — on a laptop.</p>
+    </div>
+  </section>
+
+  <footer>
+    <p>All data synthetic, generated from a fixed seed — which is what makes the idempotency tests
+    mean something. Odds derive from simulated probabilities with a 6.5% overround, so the realised
+    hold converges on a plausible book margin instead of being invented. Every figure on this page
+    came from one run of the pipeline.</p>
+  </footer>
+
+</div>
+</div>

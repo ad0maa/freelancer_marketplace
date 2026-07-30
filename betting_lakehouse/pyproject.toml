@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "betting-lakehouse"
+version = "0.1.0"
+description = "Sportsbet-style PySpark + Databricks lakehouse demo: medallion, Data Vault 2.0 and dimensional marts"
+requires-python = ">=3.10"
+dependencies = ["PyYAML>=6.0"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# One entry point per pipeline layer. These are the names the Databricks Asset
+# Bundle's python_wheel_task definitions call (see databricks.yml).
+[project.scripts]
+lakehouse-bronze = "betting_lakehouse.cli:bronze_ingest"
+lakehouse-silver = "betting_lakehouse.cli:silver_cleanse"
+lakehouse-vault-hubs = "betting_lakehouse.cli:vault_hubs"
+lakehouse-vault-links = "betting_lakehouse.cli:vault_links"
+lakehouse-vault-satellites = "betting_lakehouse.cli:vault_satellites"
+lakehouse-gold-dimensions = "betting_lakehouse.cli:gold_dimensions"
+lakehouse-gold-facts = "betting_lakehouse.cli:gold_facts"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Spark tests are slow to start (one JVM per session), so keep output readable.
+addopts = "-q --durations=5"
+filterwarnings = ["ignore::DeprecationWarning"]

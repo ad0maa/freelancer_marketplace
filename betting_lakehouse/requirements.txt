@@ -1,0 +1,9 @@
+# Local development / demo requirements.
+#
+# On Databricks you do NOT install pyspark or delta-spark - the runtime provides them.
+# A Databricks Runtime (DBR) 16.x cluster ships Spark 3.5/4.0 and Delta Lake already.
+# These pins exist so the same code runs on a laptop.
+pyspark==4.0.1
+delta-spark==4.0.0
+PyYAML>=6.0
+pytest>=8.0
